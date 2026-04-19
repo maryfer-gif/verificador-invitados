@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
     <title>Verificador de Invitados - Evento</title>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: 'Poppins', sans-serif; background: linear-gradient(135deg, #F39200 0%, #E6332A 100%); min-height: 100vh; padding: 20px; }
@@ -53,9 +54,9 @@
         .etiqueta-item .mini-especialidad { font-size: 10px; font-weight: 700; color: #E6332A; text-transform: uppercase; }
         .etiqueta-item .mini-nombre { font-size: 12px; font-weight: 700; color: #1D2544; }
         .etiqueta-item .mini-egreso { font-size: 9px; color: #4A4A4A; }
+        .loading { text-align: center; padding: 20px; color: #666; }
         @media print { body * { visibility: hidden; } .etiqueta-print { visibility: visible; position: absolute; top: 0; left: 0; } }
         @media (max-width: 768px) { .card { padding: 20px; } .tabs { flex-direction: column; } }
-        .loading { text-align: center; padding: 20px; color: #666; }
     </style>
 </head>
 <body>
@@ -131,9 +132,12 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script>
         // ============================================
-        // CONFIGURACIÓN - URL DE GOOGLE APPS SCRIPT
+        // ⚠️ COLOCA AQUÍ TUS CREDENCIALES DE SUPABASE ⚠️
         // ============================================
-        const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzHX-JurQdLVrWhBiKPiylI1QSXaX_s4cZB0ypkQd8ezJI_2M9wijbSzIzx4IeO9-500Q/exec";
+        const SUPABASE_URL = "https://tU_prOyEcTo.supabase.co";  // <--- REEMPLAZA ESTO
+        const SUPABASE_ANON_KEY = "tu_clave_anonima_aqui";       // <--- REEMPLAZA ESTO
+        
+        const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
         
         let invitados = [];
         let verificadores = [];
@@ -142,73 +146,79 @@
         let contrasenaDirectivo = "admin123";
         
         // ============================================
-        // SINCRONIZACIÓN CON GOOGLE SHEETS
+        // FUNCIONES DE SUPABASE
         // ============================================
-        async function syncLeer() {
-            try {
-                const response = await fetch(SCRIPT_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: "leer" })
-                });
-                const data = await response.json();
-                if (data.success) {
-                    invitados = data.data;
-                    return true;
-                }
-                return false;
-            } catch(e) {
-                console.error("Error al leer:", e);
-                return false;
+        
+        async function cargarInvitados() {
+            const { data, error } = await supabase
+                .from('invitados')
+                .select('*')
+                .order('codigo');
+            if (error) { console.error("Error cargando invitados:", error); return []; }
+            return data || [];
+        }
+        
+        async function guardarInvitados(invitados) {
+            // Actualizar o insertar cada invitado
+            for (const invitado of invitados) {
+                const { error } = await supabase
+                    .from('invitados')
+                    .upsert(invitado, { onConflict: 'codigo' });
+                if (error) console.error("Error guardando invitado:", error);
             }
         }
         
-        async function syncEscribir() {
-            try {
-                await fetch(SCRIPT_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: "escribir", invitados: invitados })
-                });
-                return true;
-            } catch(e) {
-                console.error("Error al escribir:", e);
-                return false;
+        async function cargarVerificadoresDB() {
+            const { data, error } = await supabase
+                .from('verificadores')
+                .select('*')
+                .order('codigo');
+            if (error) { console.error("Error cargando verificadores:", error); return []; }
+            return data || [];
+        }
+        
+        async function guardarVerificadoresDB(verificadores) {
+            for (const v of verificadores) {
+                const { error } = await supabase
+                    .from('verificadores')
+                    .upsert(v, { onConflict: 'codigo' });
+                if (error) console.error("Error guardando verificador:", error);
             }
         }
         
-        function guardarLocal() {
-            localStorage.setItem('invitados', JSON.stringify(invitados));
-            localStorage.setItem('verificadores', JSON.stringify(verificadores));
-            localStorage.setItem('etiquetasImpresas', JSON.stringify(etiquetasImpresas));
+        async function cargarEtiquetasDB() {
+            const { data, error } = await supabase
+                .from('etiquetas_impresas')
+                .select('*')
+                .order('id', { ascending: false });
+            if (error) { console.error("Error cargando etiquetas:", error); return []; }
+            return data || [];
         }
         
-        function cargarLocal() {
-            const invitadosLocal = localStorage.getItem('invitados');
-            if (invitadosLocal && invitadosLocal !== "[]") invitados = JSON.parse(invitadosLocal);
-            const verificadoresLocal = localStorage.getItem('verificadores');
-            if (verificadoresLocal) verificadores = JSON.parse(verificadoresLocal);
-            const etiquetasLocal = localStorage.getItem('etiquetasImpresas');
-            if (etiquetasLocal) etiquetasImpresas = JSON.parse(etiquetasLocal);
+        async function guardarEtiquetaDB(etiqueta) {
+            const { error } = await supabase
+                .from('etiquetas_impresas')
+                .insert([etiqueta]);
+            if (error) console.error("Error guardando etiqueta:", error);
         }
+        
+        // ============================================
+        // FUNCIONES PRINCIPALES
+        // ============================================
         
         async function sincronizar() {
             mostrarResultado("🔄 Sincronizando...", "exito");
-            const exito = await syncLeer();
-            if (exito) {
-                mostrarResultado("✅ Datos sincronizados", "exito");
-                guardarLocal();
-            } else {
-                cargarLocal();
-                mostrarResultado("⚠️ Usando datos locales", "error");
-            }
+            invitados = await cargarInvitados();
+            verificadores = await cargarVerificadoresDB();
+            etiquetasImpresas = await cargarEtiquetasDB();
+            mostrarResultado("✅ Datos sincronizados", "exito");
             actualizarTodo();
             setTimeout(() => document.getElementById('resultado').innerHTML = '', 2000);
         }
         
         async function guardarYSincronizar() {
-            guardarLocal();
-            await syncEscribir();
+            await guardarInvitados(invitados);
+            await guardarVerificadoresDB(verificadores);
             actualizarTodo();
         }
         
@@ -225,9 +235,7 @@
             document.getElementById(tab).classList.add('active');
             document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
             event.target.classList.add('active');
-            if (tab === 'admin') { cargarTablaAdmin(); actualizarStatsAdmin(); }
-            if (tab === 'directivoPanel') { cargarTablaDirectivo(); cargarVerificadores(); actualizarStatsDirectivo(); }
-            if (tab === 'etiquetas') { mostrarEtiquetas(); }
+            if (tab === 'etiquetas') mostrarEtiquetas();
         }
         
         function cargarTablaAdmin() {
@@ -247,21 +255,13 @@
             document.getElementById('pendientesCountAdmin').textContent = total - reg;
         }
         
-        function actualizarStatsDirectivo() {
-            const total = invitados.length;
-            const reg = invitados.filter(i => i.estado === 'registrado').length;
-            if(document.getElementById('totalCount')) document.getElementById('totalCount').textContent = total;
-            if(document.getElementById('registradosCount')) document.getElementById('registradosCount').textContent = reg;
-            if(document.getElementById('pendientesCount')) document.getElementById('pendientesCount').textContent = total - reg;
-        }
-        
         function cargarTablaDirectivo() {
             const tbody = document.getElementById('listaInvitadosDirectivo');
             if (!tbody) return;
             tbody.innerHTML = '';
             for (let idx = 0; idx < invitados.length; idx++) {
                 const i = invitados[idx];
-                tbody.insertRow().innerHTML = `<td>${i.codigo}</td><td>${i.nombre}</td><td>${i.email}</td><td>${i.especialidad}</td><td>${i.estudio}<td><td class="estado-${i.estado}">${i.estado === 'registrado' ? '✅ Registrado' : '⏳ Pendiente'}</td><td>${i.hora_registro || '---'}</td><td>${i.verificado_por || '---'}</td><td><button onclick="editarInvitado(${idx})" style="background:#F39200;padding:5px 10px">✏️</button> <button onclick="eliminarInvitado(${idx})" style="background:#E6332A;padding:5px 10px">🗑️</button></td>`;
+                tbody.insertRow().innerHTML = `<td>${i.codigo}</td><td>${i.nombre}</td><td>${i.email}</td><td>${i.especialidad}</td><td>${i.estudio}</td><td class="estado-${i.estado}">${i.estado === 'registrado' ? '✅ Registrado' : '⏳ Pendiente'}</td><td>${i.hora_registro || '---'}</td><td>${i.verificado_por || '---'}</td><td><button onclick="editarInvitado(${idx})" style="background:#F39200;padding:5px 10px">✏️</button> <button onclick="eliminarInvitado(${idx})" style="background:#E6332A;padding:5px 10px">🗑️</button></td>`;
             }
         }
         
@@ -270,7 +270,7 @@
             if (!tbody) return;
             tbody.innerHTML = '';
             for (const v of verificadores) {
-                tbody.insertRow().innerHTML = `<td>${v.codigo}</td><td>${v.nombre}</td><td>${v.fecha}</td>`;
+                tbody.insertRow().innerHTML = `<td>${v.codigo}</td><td>${v.nombre}</td><td>${v.fecha_asignacion}</td>`;
             }
         }
         
@@ -297,13 +297,13 @@
         function abrirModalVerificador() { document.getElementById('modalAsignarVerificador').style.display = 'flex'; }
         function cerrarModalAsignar() { document.getElementById('modalAsignarVerificador').style.display = 'none'; }
         
-        function asignarVerificador() {
+        async function asignarVerificador() {
             const codigo = document.getElementById('nuevoVerificadorCodigo').value.trim().toUpperCase();
             const nombre = document.getElementById('nuevoVerificadorNombre').value.trim();
             if (!codigo || !nombre) { alert("Complete los campos"); return; }
             if (verificadores.find(v => v.codigo === codigo)) { alert("Código ya existe"); return; }
-            verificadores.push({ codigo, nombre, fecha: new Date().toLocaleString() });
-            guardarYSincronizar();
+            verificadores.push({ codigo, nombre, fecha_asignacion: new Date().toLocaleString() });
+            await guardarYSincronizar();
             cerrarModalAsignar();
             alert(`✅ Verificador ${nombre} asignado`);
         }
@@ -364,9 +364,10 @@
             alert(`✅ Invitado ${nombre} registrado`);
         }
         
-        function generarEtiqueta(nombre, especialidad, estudio) {
-            etiquetasImpresas.push({ nombre, especialidad, estudio, fecha: new Date().toLocaleString() });
-            guardarLocal();
+        async function generarEtiqueta(nombre, especialidad, estudio) {
+            const etiqueta = { nombre, especialidad, estudio, fecha: new Date().toLocaleString() };
+            await guardarEtiquetaDB(etiqueta);
+            etiquetasImpresas = await cargarEtiquetasDB();
             mostrarEtiquetas();
             document.getElementById('etiquetaPreview').innerHTML = `<div class="etiqueta-print"><div class="etiqueta-especialidad">${especialidad.toUpperCase()}</div><div class="etiqueta-nombre">${nombre}</div><div class="etiqueta-egreso">${estudio}</div></div>`;
             document.getElementById('modalEtiqueta').style.display = 'flex';
@@ -377,7 +378,7 @@
             if (!container) return;
             container.innerHTML = '';
             if (etiquetasImpresas.length === 0) { container.innerHTML = '<p>No hay etiquetas</p>'; return; }
-            for (let i = etiquetasImpresas.length-1; i >= 0; i--) {
+            for (let i = 0; i < etiquetasImpresas.length; i++) {
                 const e = etiquetasImpresas[i];
                 container.innerHTML += `<div class="etiqueta-item"><div class="mini-especialidad">${e.especialidad.toUpperCase()}</div><div class="mini-nombre">${e.nombre}</div><div class="mini-egreso">${e.estudio}</div><div style="font-size:8px">${e.fecha}</div><button onclick="reimprimir(${i})" style="margin-top:5px;padding:5px">🖨️ Reimprimir</button></div>`;
             }
@@ -442,41 +443,8 @@
             if (nueva.length < 4) return document.getElementById('errorPassword').innerHTML = 'Mínimo 4 caracteres';
             if (nueva !== conf) return document.getElementById('errorPassword').innerHTML = 'No coinciden';
             contrasenaDirectivo = nueva;
-            guardarLocal();
             cerrarModalPassword();
             alert('✅ Contraseña cambiada');
         }
         
-        function abrirLoginDirectivo() { document.getElementById('modalLoginDirectivo').style.display = 'flex'; document.getElementById('directivoPassword').value = ''; document.getElementById('errorLogin').innerHTML = ''; }
-        function cerrarLoginDirectivo() { document.getElementById('modalLoginDirectivo').style.display = 'none'; }
-        function abrirModalCambiarPassword() { document.getElementById('modalCambiarPassword').style.display = 'flex'; }
-        function cerrarModalPassword() { document.getElementById('modalCambiarPassword').style.display = 'none'; }
-        
-        let scannerActivado = false;
-        function iniciarScanner() {
-            if (scannerActivado) return;
-            const codeReader = new ZXing.BrowserMultiFormatReader();
-            codeReader.listVideoInputDevices().then(devices => {
-                if (devices.length) {
-                    codeReader.decodeFromVideoDevice(devices[0].deviceId, 'preview', (result) => {
-                        if (result) { document.getElementById('codigoInput').value = result.text; verificarInvitado(); codeReader.reset(); scannerActivado = false; }
-                    });
-                    scannerActivado = true;
-                } else alert('No hay cámara');
-            }).catch(() => alert('Error de cámara'));
-        }
-        
-        document.addEventListener('DOMContentLoaded', () => {
-            cargarLocal();
-            actualizarTodo();
-            sincronizar();
-            document.getElementById('codigoInput').addEventListener('keypress', e => { if (e.key === 'Enter') verificarInvitado(); });
-            ['regCodigo','regNombre','regEmail','regEstudio'].forEach(id => {
-                document.getElementById(id).addEventListener('keypress', e => { if (e.key === 'Enter') guardarRegistroInvitado(); });
-            });
-            document.getElementById('verificadorCodigo').addEventListener('keypress', e => { if (e.key === 'Enter') iniciarSesionVerificador(); });
-            document.getElementById('directivoPassword').addEventListener('keypress', e => { if (e.key === 'Enter') loginDirectivo(); });
-        });
-    </script>
-</body>
-</html>
+        function abrirLoginDirectivo() { document.getElementById('modalLoginDirectivo').style.display = 'flex'; document.getElementById('directivoPassword').value = ''; document
